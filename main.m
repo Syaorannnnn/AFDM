@@ -1,188 +1,157 @@
-%
-%   功能： 仿真主测试界面
-%
-clc; 
-clear; 
-close all;
-%% 仿真参数
-carrierFreq = 4e9;  % 载波频率
-bandwidth = 1e6;    % 带宽
-samplingFreq = 2 * bandwidth; % 奈奎斯特采样频率
-
+clc; clear; close all;
+%% 基础参数
 bps = 2;    % 比特率
 M = 2^bps;  % 星座图点数
-N = 2^8;    % 子载波个数
-NT = 1;     % 符号周期数
 
-%% Channel Detection 多帧信号经过DD信道叠加高斯白噪
-N_frames = 100;                         % 总帧数
-SNRdB = 0 : 3 : 30 ;                    % 预设最大信噪比30dB
+N_frames = 1e2;                         % 总帧数
+N_data = 2^8;  % 有效数据数
+SNRdB = 0 : 5 : 30;                    % 预设最大信噪比
 SNR_idx_max = length(SNRdB);
-% 构建双色散信道
-P = 3;
-max_normDelay = 2;           % 最大归一化延迟索引
-max_normDoppler = 1;         % 最大归一化多普勒
 
+P = 3; % 多径数
+N0 = 10.^(-SNRdB ./ 10);
+%% 多帧模拟
 BER1 = zeros(1,SNR_idx_max);
 BER2 = zeros(1,SNR_idx_max);
-for SNR_idx = 1 : SNR_idx_max
-    N0 = 10^(-SNRdB(SNR_idx) / 10);                  % 噪声功率
-    % Window_Power_Scale = 1 / 0.375;
-    % N0 = N0 * Window_Power_Scale;
+BER3 = zeros(1,SNR_idx_max);
+BER4 = zeros(1,SNR_idx_max);
+%% SNR步进
+for i = 1 : SNR_idx_max
+    % 初始化
+    total_errs1 = 0;
+    total_errs2 = 0;
+    total_errs3 = 0;
+    total_errs4 = 0;
+    total_bits = N_data * N_frames * bps;
+    for frame_idx = 1 : N_frames
+    % maxNormDelay = 2;
+    % maxNormDoppler = 1;
 
-    % 初始化误差统计
-    total_errors_LMMSE = 0;
-    total_errors_MRC_DFE = 0;
-    total_valid_bits = 0;
+    % 给出固定的归一化时延、归一化多普勒、信道增益
+    pathDelays = [2 3 5];
+    pathDopplers = [-0.9 0.5 0.8];
+    pathGains = (randn(1,P) + 1j .* randn(1,P)) ./ sqrt(2);   % 瑞利信道
+    
+    
+    max_Doppler = max(abs(pathDopplers));
+    max_Doppler_alpha = ceil(max_Doppler);              % 对多普勒向上取整
+    max_Doppler_a = max_Doppler - max_Doppler_alpha;    % 多普勒的小数部分，范围[-0.5,0.5]
+    max_Delay = max(pathDelays);
+    % 均取前缀长度为最大多径时延
+    CP_lenth = max_Delay;
+    CPP_lenth = max_Delay;
 
-        for frame_idx = 1 : N_frames
-            % pathDelays = randi(max_normDelay, [1,P]);
-            % pathDelays = sort(pathDelays - min(pathDelays));      % 整数
-            % pathDopplers = max_normDoppler - 2 * max_normDoppler * rand(1,P);
+    N = N_data + CPP_lenth; % 一帧的总符号长度 Data + Overhead
+    data_range = (1 + CPP_lenth) : N;
+    %% 设计c1、c2参数 
+    k_v = 2;    % 用于对抗分数多普勒带来的IDI与IDPI，为不同径带来足够高的分离度
+    c1 = (2 * (max_Doppler_alpha + k_v) + 1) / (2 * N_data);           % 满足正交条件的c1，使多径各路径不发生交叠
+    c2 = 1 / (N^2 * 2 * pi);
+    
+    if (2 * (max_Doppler + k_v) * (max_Delay + 1)) + max_Delay > N_data      %必须满足正交条件
+        fprintf("子载波不满足正交！\n");
+    end
 
-            pathDelays = [0 1 2];
-            pathDopplers = [-0.8 0.5 0.4];
-
-            pathGains = (randn(1,P) + 1j .* randn(1,P)) ./ sqrt(2);   % 瑞利信道
-
-            max_Doppler = max(abs(pathDopplers));
-            max_Doppler_alpha = ceil(max_Doppler);              % 对多普勒向上取整
-            max_Doppler_a = max_Doppler - max_Doppler_alpha;    % 多普勒的小数部分，范围[-0.5,0.5]
-            max_Delay = max(pathDelays);
-
-            % 设计c1、c2参数 
-            k_v = 2;    % 用于对抗分数多普勒带来的IDI与IDPI，为不同径带来足够高的分离度
-            c1_AFDM = (2 * (max_Doppler_alpha + k_v) + 1) / (2 * N);           % 满足正交条件的c1，使多径各路径不发生交叠
-            c2_AFDM = 1 / (N^2 * 2 * pi);
-
-            if (2 * (max_Doppler + k_v) * (max_Delay + 1)) + max_Delay > N      %必须满足正交条件
-                fprintf("子载波不满足正交！\n");
-            end
+        %% 发送端
+        % 生成原始数据
+        X0 = randi([0 M-1], N_data, 1);
+        % M-QAM调制 映射
+        X_QAM = qammod(X0, M, 'UnitAveragePower', true);
+        % IDAFT(c1 = c2 = 0时IDAFT退化成为IDFT)
+        S0 = IDAFT(X_QAM, c1, c2);
+        S0_OFDM = IDAFT(X_QAM,0, 0); 
+        % 生成CPP
+        CPP = S0(end - CPP_lenth + 1 : end) .* exp(-1j * 2 * pi * c1 * (N_data^2 + 2 * N_data * (-CPP_lenth:-1).'));
+        % 添加CPP / CP
+        S_AFDM = [CPP; S0];
+        S_OFDM = [S0(end - CP_lenth + 1 : end); S0];
         
-            guardWidth = (max_Delay + 1) * (2 * (max_Doppler_alpha + k_v) + 1) - 1;     % 保护间隔宽度
-            Pilot_lenth = max_Delay + 1;                                                  % Pilot_lenth >= maxDelay - 1
-            Data_lenth = N - 2 * guardWidth - Pilot_lenth;
+        %% 经过DD信道叠加AWGN噪声
+        Noise = sqrt(N0(i) / 2) * (randn(N,1) + 1j * randn(N,1));           % 构造AWGN噪声
+        H = LTVchannel(N,pathDelays,pathDopplers,pathGains);                % 构造LTV信道矩阵
+        H_eff_AFDM = Gen_Eff_Channel(H,CPP_lenth,c1,c2);     % AFDM的有效信道矩阵
+        H_eff_OFDM = Gen_Eff_Channel(H,CP_lenth,0,0);       % OFDM的有效信道矩阵
+
+        %% 接收端
+        R_AFDM = H * S_AFDM + Noise;    % 接收信号 r = H * s + w
+        R_OFDM = H * S_OFDM + Noise;
+        % 移除CPP / CP
+        R_AFDM = R_AFDM(CPP_lenth + 1 : end);
+        R_OFDM = R_OFDM(CP_lenth + 1 : end);
+        % DAFT (c1 = c2 = 0时DAFT退化成为DFT)
+        Y_AFDM = DAFT(R_AFDM,c1,c2);
+        Y_OFDM = DAFT(R_OFDM,0,0);
+        % LMMSE / MRC-Based DFE
+        X_AFDM_hat1 = LMMSE(Y_AFDM,H_eff_AFDM,N0(i));
+        X_AFDM_hat2 = Weighted_MRC_DFE(Y_AFDM,H_eff_AFDM,N0(i),3);
+
+        % X_OFDM_hat1 = LMMSE(Y_OFDM,H_eff_OFDM,N0(i));
+        % X_OFDM_hat2 = Weighted_Hard_MRC_DFE(Y_OFDM,H_eff_OFDM,N0(i),3,M);
+        % 解映射
+        X0_hat1 = qamdemod(X_AFDM_hat1, M, 'UnitAveragePower', true);
+        X0_hat2 = qamdemod(X_AFDM_hat2, M, 'UnitAveragePower', true);
+        % X0_hat3 = qamdemod(X_OFDM_hat1, M, 'UnitAveragePower', true);
+        % X0_hat4 = qamdemod(X_OFDM_hat2, M, 'UnitAveragePower', true);
+        % 统计帧错误
+        [nErr1,~] = biterr(X0,X0_hat1);
+        [nErr2,~] = biterr(X0,X0_hat2);
+        % [nErr3,~] = biterr(X0,X0_hat3);
+        % [nErr4,~] = biterr(X0,X0_hat4);
         
-            H = DDchannel(N,pathDelays,pathDopplers,pathGains,samplingFreq,c1_AFDM);
-            H_eff = AFDM_Channel(H,c1_AFDM,c2_AFDM);
+        % 累加错误与总bit数
+        total_errs1 = total_errs1 + nErr1;
+        total_errs2 = total_errs2 + nErr2;
+        % total_errs3 = total_errs3 + nErr3;
+        % total_errs4 = total_errs4 + nErr4;
 
-            X_i = randi([0 M-1], Data_lenth, NT);
-            % 生成能量归一化的M-QAM复符号
-            X = qammod(X_i, M, 'UnitAveragePower',true); 
-            
-            % 构造AFDM帧
-            % 构造独立的随机 Pilot
-            Pilot_i = randi([0 M-1], Pilot_lenth, 1);
-            Pilot = qammod(Pilot_i, M, 'UnitAveragePower', true);     % Pilot
-            % 帧结构：[ Pilot | Null_Guard | Data | Null_Guard ]
-            X_AFDM = [Pilot;zeros(guardWidth,1);X;zeros(guardWidth,1)];
-            X_Pilot_Only = [Pilot;zeros(N - Pilot_lenth,1)];
-            % 有用信号范围 
-            data_range = (Pilot_lenth + guardWidth + 1) : (Pilot_lenth + guardWidth + Data_lenth);
-            % theta = Embbed_Pilot_Estimation(X_AFDM,N,c1_AFDM,c2_AFDM,P,max_Delay,max_Doppler);
-
-            % 截短矩阵T
-            I_N = eye(N);
-            % T = I_N((guardWidth - (max_Doppler_alpha + k_v)) : N - (max_Doppler_alpha + k_v) - 1, :);
-            T = I_N(data_range, :);
-
-            Noise = sqrt(N0 / 2) * (randn(N,1) + 1j * randn(N,1));  % 构造AWGN噪声
-            Y_AFDM = H_eff * X_AFDM + AFDM_Demodulate(Noise,c1_AFDM,c2_AFDM);    %接收信号 y = H_eff * x + Aw
-            Y_PI = H_eff * X_Pilot_Only;
-            Y_Detec = Y_AFDM - Y_PI;
-            H_eff_truncated = H_eff * T';
-            % search_count = P * 4; 
-            % pathRows = Find_PathRows(H_eff_truncated, search_count);
-            % X_truncated = T * X_AFDM;
-            % 比较LMMSE MRC-DFE
-            [X_hat1] = Iterative_MMSE(Y_AFDM,H_eff_truncated,N0,3);
-            [X_hat2] = Weighted_MRC_DFE(Y_AFDM,H_eff,data_range,N0,3);
-
-            RX_X1 = qamdemod(X_hat1, M, 'UnitAveragePower', true);
-            RX_X2 = qamdemod(X_hat2, M, 'UnitAveragePower', true);
-
-            %统计本帧错误
-            [nErr1, ~] = biterr(X_i,RX_X1);
-            [nErr2, ~] = biterr(X_i,RX_X2);
-
-            total_errors_LMMSE = total_errors_LMMSE + nErr1;
-            total_errors_MRC_DFE = total_errors_MRC_DFE + nErr2;
-            total_valid_bits = total_valid_bits + Data_lenth;
-
-        end
-
-        BER1(SNR_idx) = total_errors_LMMSE / total_valid_bits;
-        if(BER1(SNR_idx) == 0)
-            BER1(SNR_idx) = 1e-15;
-        end
-        BER2(SNR_idx) = total_errors_MRC_DFE / total_valid_bits;
-        if(BER2(SNR_idx) == 0)
-            BER2(SNR_idx) = 1e-15;
-        end
-
+    end
+    BER1(i) = total_errs1 / total_bits;
+    BER2(i) = total_errs2 / total_bits;
+    % BER3(i) = total_errs3 / total_bits;
+    % BER4(i) = total_errs4 / total_bits;
+    BER1(BER1 == 0) = 1e-6;
+    BER2(BER2 == 0) = 1e-6;
+    % BER3(BER3 == 0) = 1e-6;
+    % BER4(BER4 == 0) = 1e-6;
 end
+%% 
+% fprintf("BER via LMMSE %.3e\nBER via MRC_DFE %.3e\n",BER1,BER2);
+Amp1 = abs(H_eff_AFDM);
+Amp2 = abs(H_eff_OFDM);
+figure(1);
+subplot(1,2,1);
+imagesc(Amp1);
+axis xy;
+colorbar;
+title('AFDM输入输出等效矩阵Heff示意图')
+xlabel('发送信号子载波索引')
+ylabel('接收信号子载波索引')
+subplot(1,2,2);
+imagesc(Amp2);
+axis xy;
+colorbar;
+title('OFDM输入输出等效矩阵Heff示意图')
+xlabel('发送信号子载波索引')
+ylabel('接收信号子载波索引')
 
 
-%% 绘图
-% Amp = abs(H_eff);
-% Amp1 = abs(H_Windowed);
-% figure(1);
-% subplot(1,2,1)
-% imagesc(Amp);
-% colorbar;
-% colormap(slanCM('rainbow'));
-% title('AFDM输入输出矩阵Heff示意图')
-% xlabel('发送信号子载波索引')
-% ylabel('接收信号子载波索引')
-% subplot(1,2,2)
-% imagesc(Amp1);
-% colorbar;
-% title('重构Heff示意图')
-% xlabel('发送信号子载波索引')
-% ylabel('接收信号子载波索引')
-% 
-% figure(2);
-% [X1, Y1] = meshgrid(1 : size(Amp, 1), 1 : size(Amp, 2)); % 生成网格点
-% surf(X1,Y1,Amp); % 绘制曲面图
-% colormap(slanCM('rainbow'))
-% shading interp;
-% colorbar;
-% title('AFDM输入输出矩阵H_e_f_f示意图')
-% xlabel('接收信号子载波索引')
-% ylabel('发送信号子载波索引')
-% zlabel('幅度')
-
-% figure(3);
-% stem(abs(Y_AFDM),'o');
-% title('接收信号幅度示意图')
-% xlabel('接收信号子载波索引')
-% ylabel('幅值')
-
-% figure(4);
-% subplot(1,2,1);
-
-% plot(1:1:N - guardWidth,x1);
-% xlim([0,N - 1]);
-% ylim([0,15]);
-% subplot(1,2,2);
-
-% plot(1:1:N - guardWidth,x3);
-% xlim([0,N - 1]);
-% ylim([0,15]);
-
-% scatterplot(X);
-% scatterplot(X_hat1);
-% title('LMMSE');
-% scatterplot(X_hat2);
-% title('MRC-DFE');
-
-% fprintf('SER via LMMSE: %.4e \nSER via MRC-DFE: %.4e \n',ser1,ser2);
-%%
-figure;
+figure(2);
+% semilogy(SNRdB,BER1,"--go",SNRdB,BER2,"--b^",SNRdB,BER3,"--ys",SNRdB,BER4,"--rd","LineWidth",1.5);
 semilogy(SNRdB,BER1,"--go",SNRdB,BER2,"--b^","LineWidth",1.5);
-title("LMMSE与MRC-Based DFE BER比较");
+title("LMMSE vs MRC-Based DFE","BER");
+ylim([1e-6,1]);
 xlabel("SNR in dB");
 ylabel("BER");
-legend("LMMSE","MRC-Based DFE");
+legend("AFDM-LMMSE","AFDM-MRC-Based DFE","OFDM-LMMSE","OFDM-MRC-Based DFE");
 hold on;
 grid on;
+
+%% M-QAM理论BER
+% BER = zeros(1,SNR_idx_max);
+% for i = 1 : SNR_idx_max
+%     X = randi([0 M-1], 1e3, 1);
+%     X_111 = qammod(X, M, 'UnitAveragePower', true);
+%     Y = qamdemod(awgn(X_111,SNRdB(i)),M, 'UnitAveragePower', true);
+%     [~,BER(i)] = biterr(X,Y);
+%     BER(BER == 0) = 1e-6;
+% end
