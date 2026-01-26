@@ -1,6 +1,6 @@
-function [X_hat] = LMMSE(R, Heff, N0)
+function [X_hat] = MMSE(R, Heff, N0)
     
-    % 功能： LMMSE 复杂度O(N^3)
+    % 功能： MMSE 复杂度O(N^3)
     % 输入:
     %   R           : 接收的已经去除CPP的信号 (Nr x 1)
     %   Heff        : 等效信道矩阵 (Nr x Nr)
