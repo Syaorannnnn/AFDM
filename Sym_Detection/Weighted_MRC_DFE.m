@@ -1,34 +1,36 @@
-function X_hat = Weighted_MRC_DFE(Y, H_eff, data_range, N0, n_iter)
+function [X_hat] = Weighted_MRC_DFE(R, H_eff, N0, n_iter)
+    
     % 功能: 基于加权最大比合并的判决反馈均衡器 (Weighted MRC-DFE) 信号检测
     % 输入:
-    %   Y           : 接收信号 (Nx1)
-    %   H_eff       : 分数多普勒下的稀疏信道矩阵 (NxN)
-    %   data_range  : 有用数据范围
+    %   R           : 去除了CPP的接收信号 (Nr x 1)
+    %   H_eff       : 分数多普勒下的稀疏信道矩阵 (Nr x Nr)
     %   N0          : 噪声功率
 
-    N_data = length(data_range);
-    H_trunc = H_eff(:, data_range); % 提取数据对应的信道列
+    N_data = size(R,1);
+    % H_trunc = H_eff(:, data_range); % 提取数据对应的信道列
 
     % 预计算每列能量
-    d = full(sum(abs(H_trunc).^2, 1)).';
+    d = full(sum(abs(H_eff).^2, 1)).';
     
     % 稀疏索引加速
     col_rows = cell(N_data, 1);
     col_vals = cell(N_data, 1);
     for k = 1 : N_data
-        [r, ~, v] = find(H_trunc(:, k));
+        [r, ~, v] = find(H_eff(:, k));
         col_rows{k} = r;
         col_vals{k} = v;
     end
     
     x_curr = zeros(N_data, 1);
     x_prev = zeros(N_data, 1);
-    Delta_y = Y; 
+    Delta_y = R; 
     
     for n = 1 : n_iter
         for k = 1 : N_data
             rows = col_rows{k};
-            if isempty(rows), continue; end
+            if isempty(rows)
+                continue; 
+            end
             h_vals = col_vals{k};
             
             % 加权 MRC
@@ -39,7 +41,7 @@ function X_hat = Weighted_MRC_DFE(Y, H_eff, data_range, N0, n_iter)
             
             % 判决反馈
             change = x_curr(k) - x_prev(k);
-            if abs(change) > 1e-10
+            if abs(change) > 1e-8
                 Delta_y(rows) = Delta_y(rows) - h_vals * change;
             end
         end
