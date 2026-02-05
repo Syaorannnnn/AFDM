@@ -3,8 +3,8 @@ clc; clear all; close all;
 bps = 2;    % 比特率
 M = 2^bps;  % 星座图点数
 
-N_sym = 1e2;   % 总符号数
-N_data = 2^8;  % 有效数据数
+N_sym = [10 1e2 1e4 1e6];   % 总符号数
+N_data = 2^6;  % 有效数据数
 SNRdB = 0 : 5 : 20;  % 信噪比
 SNR_idx_max = length(SNRdB);
 
@@ -22,36 +22,37 @@ for i = 1 : SNR_idx_max
     total_errs2 = 0;
     total_errs3 = 0;
     total_errs4 = 0;
-    total_bits = N_data * N_sym * bps;
-    for frame_idx = 1 : N_sym
-    % maxNormDelay = 2;
-    % maxNormDoppler = 1;
+    total_bits = N_data * N_sym(i) * bps;
 
-    % 给出固定的归一化时延、归一化多普勒、信道增益
-    pathDelays = [0 1 2];
-    pathDopplers = [-0.1 0.15 0.05];
+    fprintf("当前正在仿真 %d SNRdB \n", SNRdB(i));
+    for sym_idx = 1 : N_sym(i)
+        % maxNormDelay = 2;
+        % maxNormDoppler = 1;
 
-    pathGains = (randn(1,P) + 1j .* randn(1,P)) ./ sqrt(2);   % 瑞利信道
+        % 给出固定的归一化时延、归一化多普勒、信道增益
+        pathDelays = [0 1 2];
+        pathDopplers = [-0.25 0.05 1];
     
+        pathGains = (randn(1,P) + 1j * randn(1,P)) / sqrt(2);   % 瑞利信道
+            
+        max_Doppler = max(abs(pathDopplers)); 
+        max_Doppler_alpha = round(max_Doppler);              % 对多普勒向上取整
+        max_Doppler_a = max_Doppler - max_Doppler_alpha;    % 多普勒的小数部分，范围[-0.5,0.5]
+        max_Delay = max(pathDelays);
+        % 均取前缀长度为最大多径时延
+        CP_lenth = max_Delay;
+        CPP_lenth = max_Delay;
     
-    max_Doppler = max(abs(pathDopplers)); 
-    max_Doppler_alpha = ceil(max_Doppler);              % 对多普勒向上取整
-    max_Doppler_a = max_Doppler - max_Doppler_alpha;    % 多普勒的小数部分，范围[-0.5,0.5]
-    max_Delay = max(pathDelays);
-    % 均取前缀长度为最大多径时延
-    CP_lenth = max_Delay;
-    CPP_lenth = max_Delay;
-
-    N = N_data + CPP_lenth; % 所需子载波个数 Data + Overhead
-    data_range = (1 + CPP_lenth) : N;
-    %% 设计c1、c2参数 
-    k_v = 2;    % 用于对抗分数多普勒，为不同径带来足够高的分离度
-    c1 = (2 * (max_Doppler_alpha + k_v) + 1) / (2 * N_data);           % 满足正交条件的c1，使多径各路径不发生交叠
-    c2 = 1 / (N_data^2 * 2 * pi);
-    
-    if (2 * (max_Doppler + k_v) * (max_Delay + 1)) + max_Delay > N_data      %必须满足正交条件
-        fprintf("子载波不满足正交！\n");
-    end
+        N = N_data + CPP_lenth; % 所需子载波个数 Data + Overhead
+        data_range = (1 + CPP_lenth) : N;
+        %% 设计c1、c2参数 
+        k_v = 2;    % 用于对抗分数多普勒，为不同径带来足够高的分离度
+        c1 = (2 * (max_Doppler_alpha + k_v) + 1) / (2 * N_data);           % 满足正交条件的c1，使多径各路径不发生交叠
+        c2 = 1 / (N_data^2 * 2 * pi);
+        
+        if (2 * (max_Doppler + k_v) * (max_Delay + 1)) + max_Delay > N_data      %必须满足正交条件
+            fprintf("子载波不满足正交！\n");
+        end
 
         %% 发送端
         % 生成原始数据
@@ -69,8 +70,8 @@ for i = 1 : SNR_idx_max
         S = [CPP; X];
         S_OFDM = [CP; X_OFDM];
         
-        %% 经过LTV信道叠加AWGN噪声
-        Noise = sqrt(N0(i) / 2) * (randn(N,1) + 1j * randn(N,1));           % 构造AWGN噪声
+        %% 经过LTV信道叠加AWGN
+        Noise = sqrt(N0(i) / 2) * (randn(N,1) + 1j * randn(N,1));           % 构造AWGN
         H = LTVchannel(N,pathDelays,pathDopplers,pathGains);                % 构造LTV信道矩阵
         H_eff = Gen_Eff_Channel(H,CPP_lenth,c1,c2);                         % AFDM的有效信道矩阵
         H_eff_OFDM = Gen_Eff_Channel(H,CP_lenth,0,0);                       % OFDM的有效信道矩阵
@@ -78,6 +79,7 @@ for i = 1 : SNR_idx_max
         %% 接收端
         R_AFDM = H * S + Noise;    % 接收信号 r = H * s + w
         R_OFDM = H * S_OFDM + Noise;
+
         % 移除CPP / CP
         R_AFDM = R_AFDM(CPP_lenth + 1 : end);
         R_OFDM = R_OFDM(CP_lenth + 1 : end);
@@ -86,10 +88,10 @@ for i = 1 : SNR_idx_max
         Y_OFDM = DAFT(R_OFDM,0,0);
         % MMSE / MRC-Based DFE
         Y_AFDM_hat1 = MMSE(Y_AFDM,H_eff,N0(i));
-        Y_AFDM_hat2 = Weighted_MRC_DFE(Y_AFDM,H_eff,N0(i),6);
+        Y_AFDM_hat2 = Weighted_MRC_DFE(Y_AFDM,H_eff,N0(i),5);
 
         Y_OFDM_hat1 = MMSE(Y_OFDM,H_eff_OFDM,N0(i));
-        Y_OFDM_hat2 = Weighted_MRC_DFE(Y_OFDM,H_eff_OFDM,N0(i),6);
+        Y_OFDM_hat2 = Weighted_MRC_DFE(Y_OFDM,H_eff_OFDM,N0(i),5);
         % 解映射
         X0_hat1 = qamdemod(Y_AFDM_hat1, M, 'UnitAveragePower', true);
         X0_hat2 = qamdemod(Y_AFDM_hat2, M, 'UnitAveragePower', true);
@@ -130,10 +132,10 @@ for i = 1 : SNR_idx_max
     BER2(i) = total_errs2 / total_bits;
     BER3(i) = total_errs3 / total_bits;
     BER4(i) = total_errs4 / total_bits;
-    BER1(BER1 == 0) = 1e-6;
-    BER2(BER2 == 0) = 1e-6;
-    BER3(BER3 == 0) = 1e-6;
-    BER4(BER4 == 0) = 1e-6;
+    BER1(BER1 == 0) = 1e-4;
+    BER2(BER2 == 0) = 1e-4;
+    BER3(BER3 == 0) = 1e-4;
+    BER4(BER4 == 0) = 1e-4;
 end
 %% 
 % fprintf("BER via MMSE %.3e\nBER via MRC_DFE %.3e\n",BER1,BER2);
@@ -168,7 +170,7 @@ title('LTV信道矩阵示意图');
 xlabel('发送信号子载波索引');
 ylabel('接收信号子载波索引');
 
-
+%%
 figure(2);
 semilogy(SNRdB,BER1,"-go",SNRdB,BER2,"--b^",SNRdB,BER3,"-cs",SNRdB,BER4,"--rd","LineWidth",1.5);
 % semilogy(SNRdB,BER1,"-go",SNRdB,BER2,"--b^","LineWidth",1.5);

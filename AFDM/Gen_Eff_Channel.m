@@ -22,7 +22,7 @@ function [H_eff] = Gen_Eff_Channel(H,CPP_lenth, c1, c2)
     % 计算等效时域矩阵 (N_data x N_data)
     % 物理接收 = H * M * S0
     % 截取数据部分 = H(data_range, :) * M * S0
-    % 所以 H_time_eff = H(data_range, :) * M
+    % H_time_eff = H(data_range, :) * M
     H_eff = H(data_range, :) * M;
 
     L1 = diag(exp(-1j * 2 * pi * c1 * ((0:N_data-1).^2)));

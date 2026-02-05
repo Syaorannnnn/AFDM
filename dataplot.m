@@ -1,0 +1,21 @@
+clc; clear all; close all;
+SNRdB = 0 : 5 : 20; 
+load("Datas\第二次\AFDM_MMSE.mat","BER");
+AFDM_BER_MMSE = BER;
+load("Datas\第二次\AFDM_MRC.mat","BER");
+AFDM_BER_MRC = BER;
+load("Datas\OFDM_MMSE.mat","BER");
+OFDM_BER_MMSE = BER;
+load("Datas\OFDM_MRC.mat","BER");
+OFDM_BER_MRC = BER;
+
+figure(1);
+semilogy(SNRdB,AFDM_BER_MMSE,"-go",SNRdB,AFDM_BER_MRC,"--b^",SNRdB,OFDM_BER_MMSE,"-cs",SNRdB,OFDM_BER_MRC,"--rd","LineWidth",1.5);
+% semilogy(SNRdB,BER1,"-go",SNRdB,BER2,"--b^","LineWidth",1.5);
+title("LMMSE vs MRC-Based DFE","BER");
+ylim([1e-6,1]);
+xlabel("SNR in dB");
+ylabel("BER");
+legend("AFDM,MMSE","AFDM,MRC-Based DFE","OFDM,MMSE","OFDM,MRC-Based DFE");
+hold on;
+grid on;
