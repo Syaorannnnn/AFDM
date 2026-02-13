@@ -1,4 +1,4 @@
-function Channel_Estimation_Demo()
+function ChannelEstimationDemo()
     clc; clear; close all;
     
     %% 1. 参数构造
