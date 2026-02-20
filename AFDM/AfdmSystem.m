@@ -1,4 +1,4 @@
-% AfdmSystem: AFDM 通信链路仿真系统类
+% AfdmSystem: AFDM通信链路仿真系统类
 classdef AfdmSystem < handle
 
     properties
@@ -10,8 +10,8 @@ classdef AfdmSystem < handle
         
         % --- 帧结构参数 ---
         MaxNormDoppler
-        PathDelays
-        CppLength
+        MaxPathDelays
+        PrefixLength
         TotalSubcarriers
         
         % --- AFDM 核心参数 ---
@@ -27,9 +27,11 @@ classdef AfdmSystem < handle
         NumActiveCarriers
         ActiveIndices
 
-        % --- 均衡器配置 ---
-        EqualizerType       % 均衡器类型
-        NumIterations       % DFE 迭代次数
+        % --- 波形与均衡器配置 ---
+        WaveformType            % 波形类型
+        CsiMode                 % CSI模式 (Perfect, Estimated)
+        EqualizerType           % 均衡器类型
+        NumMaxIterations        % DFE最大迭代次数
 
     end
 
@@ -42,31 +44,32 @@ classdef AfdmSystem < handle
             obj.NumDataSubcarriers = 2^8;
             obj.NumPaths = 3;
             obj.MaxNormDoppler = 2;
-            obj.PathDelays = [0 1 2];
+            % obj.PathDelays = [2 3 5];
+            obj.MaxPathDelays = 5;
             obj.DopplerGuard = 4;       % k_v
             obj.PilotIndex = 1;
-            obj.PilotSymbol = 2 + 2j;
+            obj.PilotSymbol = 1 + 1j;
             obj.PilotSnr = 35;          % 导频信噪比 (dB)
             
-            obj.updateDerivedParams();
+            updateDerivedParams(obj);
         end
 
         % --- 计算衍生参数 ---
         function updateDerivedParams(obj)
-            maxDelay = max(obj.PathDelays);
-            obj.CppLength = maxDelay;
-            obj.TotalSubcarriers = obj.NumDataSubcarriers + obj.CppLength;
+            % maxDelay = max(obj.PathDelays);
+            obj.PrefixLength = obj.MaxPathDelays;
+            obj.TotalSubcarriers = obj.NumDataSubcarriers + obj.PrefixLength;
             
             % 计算 c1, c2
             obj.ChirpParam1 = (2 * (obj.MaxNormDoppler + obj.DopplerGuard) + 1) / (2 * obj.NumDataSubcarriers);
             obj.ChirpParam2 = 1 / (obj.NumDataSubcarriers^2 * 2 * pi);
             
-            if (2 * (obj.MaxNormDoppler + obj.DopplerGuard) * (maxDelay + 1)) + maxDelay > obj.NumDataSubcarriers      %必须满足正交条件
+            if (2 * (obj.MaxNormDoppler + obj.DopplerGuard) * (obj.MaxPathDelays + 1)) + obj.MaxPathDelays > obj.NumDataSubcarriers      %必须满足正交条件
                 error("子载波不满足正交！\n");
             end
 
             % 计算 ZP 和 有效索引
-            obj.ZeroPaddingLength = (maxDelay + 1) * (2 * (obj.MaxNormDoppler + obj.DopplerGuard) + 1) - 1;
+            obj.ZeroPaddingLength = (obj.MaxPathDelays + 1) * (2 * (obj.MaxNormDoppler + obj.DopplerGuard) + 1) - 1;
             
             % 计算有效载荷
             obj.NumActiveCarriers = obj.NumDataSubcarriers - 2 * obj.ZeroPaddingLength - 1;
@@ -80,38 +83,61 @@ classdef AfdmSystem < handle
 
         % --- 发送机 ---
         function [txSignal, originalData] = transmit(obj)
-            %  生成数据
+            % 生成数据
             originalData = randi([0 obj.ModulationOrder-1], obj.NumActiveCarriers, 1);
             qamSymbols = qammod(originalData, obj.ModulationOrder, 'UnitAveragePower', true);
             
-            %  组帧
-            daftFrame = zeros(obj.NumDataSubcarriers, 1);
-            daftFrame(obj.PilotIndex) = obj.PilotSymbol;
-            daftFrame(obj.ActiveIndices) = qamSymbols;
+            % 组帧
+            % 全0初始化
+            oneFrame = zeros(obj.NumDataSubcarriers, 1);
+
+            if obj.CsiMode == "Estimated"
+                oneFrame(obj.PilotIndex) = obj.PilotSymbol; % 插入导频
+            end
+
+            oneFrame(obj.ActiveIndices) = qamSymbols;
             
-            %  IDAFT
-            timeFrame = runInverseDaftTransform(obj, daftFrame);
+            %  变换回时域 IDAFT / IDFT
+            if upper(obj.WaveformType) == "AFDM"
+                timeFrame = runInverseDaftTransform(obj, oneFrame);
+            else
+                timeFrame = runInverseDftTransform(obj,oneFrame);
+            end
             
-            %  CPP
-            cpp = timeFrame(end - obj.CppLength + 1 : end) .* ...
-                  exp(-1j * 2 * pi * obj.ChirpParam1 * (obj.NumDataSubcarriers^2 + 2 * obj.NumDataSubcarriers * (-obj.CppLength:-1).'));
-            
-            txSignal = [cpp; timeFrame];
+            %  前缀 CP / CPP
+            if upper(obj.WaveformType) == "AFDM" 
+                    preFix = timeFrame(end - obj.PrefixLength + 1 : end) .* ...
+                    exp(-1j * 2 * pi * obj.ChirpParam1 * (obj.NumDataSubcarriers^2 + 2 * obj.NumDataSubcarriers * (-obj.PrefixLength:-1).'));
+            else
+                    preFix = timeFrame(end - obj.PrefixLength + 1 : end);
+            end
+            txSignal = [preFix; timeFrame];
         end
 
         % --- 接收机 ---
-        function rxData = receive(obj, rxSignal, noisePower)
-            %  移除CPP
-            rxNoCpp = rxSignal(obj.CppLength + 1 : end);
+        function rxData = receive(obj, rxSignal, noisePower,physicalChannelMatrix)
+            % 移除Prefix
+            rxNoPrefix = rxSignal(obj.PrefixLength + 1 : end);
             
-            % DAFT
-            daftRx = runDaftTransform(obj, rxNoCpp);
+            % DAFT / DFT
+            if upper(obj.WaveformType) == "AFDM"
+                finalRx = runDaftTransform(obj, rxNoPrefix);
+            else
+                finalRx = runDftTransform(obj,rxNoPrefix);
+            end
+            % daftRx = runDaftTransform(obj, rxNoPrefix);
             
-            %  提取导频进行信道估计
-            [effectiveChannelMatrix, ~] = runChannelEstimator(obj, daftRx);
+            if obj.CsiMode == "Estimated"
+                % 提取导频进行信道估计
+                [effectiveChannelMatrix, ~] = runChannelEstimator(obj, finalRx);
+            else
+                % 上帝视角 (对比AFDM OFDM)
+                effectiveChannelMatrix = generateEffectiveChannelMatrix(obj,physicalChannelMatrix);
+            end
+
             
             % 均衡
-            eqSignal = equalizer(obj,daftRx, effectiveChannelMatrix, noisePower);
+            eqSignal = equalizer(obj,finalRx, effectiveChannelMatrix, noisePower);
             
             % 解调
             rxData = qamdemod(eqSignal, obj.ModulationOrder, 'UnitAveragePower', true);
@@ -119,9 +145,10 @@ classdef AfdmSystem < handle
         end
 
         % --- 信道估计与重建 ---
+        % 仅AFDM系统可用
         function [estimatedEffectiveChannelMatrix, finalEstimatedParams] = runChannelEstimator(obj, receivedSignalDaft)
             % --- 配置搜索范围 ---
-            delaySearchRange = 0 : obj.CppLength;              
+            delaySearchRange = 0 : obj.PrefixLength;              
             dopplerSearchRange = -obj.MaxNormDoppler : obj.MaxNormDoppler; 
             
             % --- 初始化 ---
@@ -230,11 +257,12 @@ classdef AfdmSystem < handle
             
             while totalErrors < targetErrors && frameCount < maxFrames
                 % 生成信道
+                pathDelays = randperm(obj.MaxPathDelays + 1, obj.NumPaths) - 1;
                 theta = (rand(1, obj.NumPaths) * 2 * pi) - pi;
                 dopplers = obj.MaxNormDoppler * cos(theta);
                 gains = (randn(1, obj.NumPaths) + 1j * randn(1, obj.NumPaths)) / sqrt(2 * obj.NumPaths);
                 
-                physicalChannelMatrix = LtvChannel(obj.TotalSubcarriers, obj.PathDelays, dopplers, gains);
+                physicalChannelMatrix = LtvChannel(obj.TotalSubcarriers, pathDelays, dopplers, gains);
                 % 发送前修正导频功率
                 obj.PilotSymbol = sqrt(pilotPower) * (obj.PilotSymbol / abs(obj.PilotSymbol));
                 % 发送
@@ -245,7 +273,7 @@ classdef AfdmSystem < handle
                 rxSignal = physicalChannelMatrix * txSignal + noise;
                 
                 % 接收
-                rxData = obj.receive(rxSignal, noisePower);
+                rxData = receive(obj,rxSignal, noisePower,physicalChannelMatrix);
                 
                 % 统计
                 [errs, ~] = biterr(txData, rxData);
@@ -261,7 +289,7 @@ classdef AfdmSystem < handle
     end
 
     methods (Access = private)
-        % --- 离散仿射傅里叶变换 ---
+        % --- DAFT ---
         function demodulatedSignal = runDaftTransform(obj,receivedSignal)
             
             signalLength = size(receivedSignal, 1);
@@ -275,7 +303,7 @@ classdef AfdmSystem < handle
 
         end
 
-        % --- 离散仿射傅里叶反变换 ---
+        % --- IDAFT ---
         function timeDomainSignal = runInverseDaftTransform(obj, daftDomainSignal)
 
             signalLength = size(daftDomainSignal, 1);
@@ -290,36 +318,58 @@ classdef AfdmSystem < handle
 
         end
 
+        % --- DFT ---
+        function demodulatedSignal = runDftTransform(obj,receivedSignal)
+            signalLength = size(receivedSignal, 1);
+            dftMatrix = dftmtx(signalLength) ./ sqrt(signalLength);
+            demodulatedSignal = dftMatrix * receivedSignal;
+        end
+
+        % --- IDFT ---
+        function timeDomainSignal = runInverseDftTransform(obj,dftDomainSignal)
+            signalLength = size(dftDomainSignal, 1);
+            dftMatrix = dftmtx(signalLength) ./ sqrt(signalLength);
+            timeDomainSignal = dftMatrix' * dftDomainSignal;
+        end
+
         % --- 等效信道矩阵生成 ---
         function effectiveChannelMatrix = generateEffectiveChannelMatrix(obj,channelMatrixPhysical)
             % totalSubcarriers = size(channelMatrixPhysical, 1);
-            % numDataSubcarriers = obj.TotalSubcarriers - obj.CppLength;
+            % numDataSubcarriers = obj.TotalSubcarriers - obj.PrefixLength;
 
             % 这个索引包含了ZP部分
-            dataIndices = (1 + obj.CppLength) : obj.TotalSubcarriers;
+            dataIndices = (1 + obj.PrefixLength) : obj.TotalSubcarriers;
             
             % 构造 CPP 添加矩阵 (M)
             cppInsertionMatrix = zeros(obj.TotalSubcarriers, obj.NumDataSubcarriers);
             
             % 数据部分直接映射
-            cppInsertionMatrix(obj.CppLength + 1 : end, :) = eye(obj.NumDataSubcarriers);
+            cppInsertionMatrix(obj.PrefixLength + 1 : end, :) = eye(obj.NumDataSubcarriers);
             
-            % gamma_CPP
-            gammaVector = exp(-1j * 2 * pi * obj.ChirpParam1 * (obj.NumDataSubcarriers^2 + 2 * obj.NumDataSubcarriers * (-obj.CppLength:-1).'));
-            cppInsertionMatrix(1 : obj.CppLength, (obj.NumDataSubcarriers - obj.CppLength + 1) : obj.NumDataSubcarriers) = diag(gammaVector);
-
+            if upper(obj.WaveformType) == "AFDM"
+                % gamma_CPP
+                gammaVector = exp(-1j * 2 * pi * obj.ChirpParam1 * (obj.NumDataSubcarriers^2 + 2 * obj.NumDataSubcarriers * (-obj.PrefixLength:-1).'));
+            else
+                gammaVector = ones(obj.PrefixLength, 1);
+            end
+            
+            cppInsertionMatrix(1 : obj.PrefixLength, (obj.NumDataSubcarriers - obj.PrefixLength + 1) : obj.NumDataSubcarriers) = diag(gammaVector);
             % 计算等效时域矩阵 (N_data x N_data)
             % 截取接收信号的数据部分 = H(dataIndices, :) * M * S0
             effectiveChannelTime = channelMatrixPhysical(dataIndices, :) * cppInsertionMatrix;
 
             % 变换域矩阵
-            chirpMatrix1 = diag(exp(-1j * 2 * pi * obj.ChirpParam1 * ((0:obj.NumDataSubcarriers-1).^2)));
-            chirpMatrix2 = diag(exp(-1j * 2 * pi * obj.ChirpParam2 * ((0:obj.NumDataSubcarriers-1).^2)));
             dftMatrix  = dftmtx(obj.NumDataSubcarriers) ./ sqrt(obj.NumDataSubcarriers);
+            if upper(obj.WaveformType) == "AFDM"
+                chirpMatrix1 = diag(exp(-1j * 2 * pi * obj.ChirpParam1 * ((0:obj.NumDataSubcarriers-1).^2)));
+                chirpMatrix2 = diag(exp(-1j * 2 * pi * obj.ChirpParam2 * ((0:obj.NumDataSubcarriers-1).^2)));
+                % H_eff = A * H_time * A'
+                % 其中 A = L2 * F * L1
+                transformMatrix = chirpMatrix2 * dftMatrix * chirpMatrix1;
+            else
+                transformMatrix = dftMatrix;
+            end
 
-            % H_eff = A * H_time * A'
-            % 其中 A = L2 * F * L1
-            transformMatrix = chirpMatrix2 * dftMatrix * chirpMatrix1;
             
             effectiveChannelMatrix = transformMatrix * effectiveChannelTime * transformMatrix';
 
@@ -340,24 +390,13 @@ classdef AfdmSystem < handle
 
         % --- MMSE 均衡器 ---
         function estimatedSignal = runMmse(obj,receivedSignal, effectiveChannelMatrix, noisePower)
-    
-        % 功能： MMSE 线性均衡器 复杂度O(N^3)
-        % 输入:
-        %   receivedSignal         : 接收的已经去除CPP的信号 (Nr x 1)
-        %   effectiveChannelMatrix : 等效信道矩阵 (Nr x Nr)
-        %   noisePower             : 噪声功率
-        % 输出:
-        %   estimatedSignal        : 均衡后的信号估计值
-
-            effectiveChannelMatrixActive = effectiveChannelMatrix(:, obj.ActiveIndices);     % 只取有效载波对应的子矩阵
-
-            % 计算 Gram 矩阵 (H' * H)
-            gramMatrix = effectiveChannelMatrixActive' * effectiveChannelMatrixActive;   % Nr * Nr
-        
-            % 求解线性方程组 (H'H + N0*I) * x = H'y
-            estimatedSignal = (gramMatrix + noisePower * eye(obj.NumActiveCarriers)) \ (effectiveChannelMatrixActive' * receivedSignal); 
-
-            % fprintf("%.2e\n", cond(gramMatrix + noisePower * eye(numSubcarriers)));
+            
+                % 只取有效载波对应的子矩阵
+                effectiveChannelMatrixActive = effectiveChannelMatrix(:, obj.ActiveIndices); 
+                % 计算 Gram 矩阵 (H' * H)
+                gramMatrix = effectiveChannelMatrixActive' * effectiveChannelMatrixActive;   % Nr * Nr
+                % 求解线性方程组 (H'H + N0*I) * x = H'y
+                estimatedSignal = (gramMatrix + noisePower * eye(obj.NumActiveCarriers)) \ (effectiveChannelMatrixActive' * receivedSignal); 
         end
 
         % --- 加权 MRC-DFE 均衡器 ---
@@ -374,6 +413,7 @@ classdef AfdmSystem < handle
             %   estimatedSignal        : 估计的有用信号
 
             numDataSubcarriers = size(receivedSignal, 1);
+            epsilon = 1e-5;
             
             % 预计算每列能量 (Column Energies) ||h_k||^2
             columnEnergies = full(sum(abs(effectiveChannelMatrix).^2, 1)).';
@@ -392,9 +432,13 @@ classdef AfdmSystem < handle
             previousEstimate = zeros(numDataSubcarriers, 1);
             residualSignal = receivedSignal; % 初始残差等于接收信号
             
-            for n = 1 : obj.NumIterations
-                % === 核心修改：只遍历有效数据索引 ===
-                for k = obj.ActiveIndices
+            % --- 基于信道能量进行降序排序 ---
+            activeEnergies = columnEnergies(obj.ActiveIndices);
+            [~, sortIdx] = sort(activeEnergies, 'descend');
+            orderedIndices = obj.ActiveIndices(sortIdx); % 能量大的子载波排在前面
+
+            for n = 1 : obj.NumMaxIterations
+                for k = orderedIndices
                     rows = columnRowIndices{k};
                     if isempty(rows)
                         continue; 
@@ -416,8 +460,20 @@ classdef AfdmSystem < handle
                         residualSignal(rows) = residualSignal(rows) - channelValues * estimateChange;
                     end
                 end
-                % 准备下一次迭代
-                previousEstimate = currentEstimate;
+
+                % 检查本次迭代与上一次迭代的向量差异 (2-范数)
+                iterationDiff = norm(currentEstimate - previousEstimate);
+                
+                % 如果变化量已经极小，说明算法已收敛，提前跳出循环
+                if iterationDiff < epsilon
+                    % 可以在这里取消注释下面这行来观察平均迭代次数
+                    % fprintf('MRC-DFE 在第 %d 次迭代提前收敛\n', n);
+                    break; 
+                else
+                    % 准备下一次迭代
+                    previousEstimate = currentEstimate;
+                end
+
             end
             
             % % 输出完整的向量（含ZP位置的0）
