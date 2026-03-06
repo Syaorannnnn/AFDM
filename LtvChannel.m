@@ -1,11 +1,4 @@
 function channelMatrixPhysical = LtvChannel(totalSubcarriers, pathDelays, pathDopplers, pathGains)
-    
-    % 功能：生成线性时变信道矩阵 (LTV)
-    % 输入：
-    %   totalSubcarriers : 总子载波数 (含CPP)
-    %   pathDelays       : 路径时延数组
-    %   pathDopplers     : 路径多普勒数组
-    %   pathGains        : 路径增益数组
 
     numPaths = length(pathDelays);
 
@@ -16,16 +9,16 @@ function channelMatrixPhysical = LtvChannel(totalSubcarriers, pathDelays, pathDo
 
     channelMatrixPhysical = zeros(totalSubcarriers, totalSubcarriers);
 
-    for i = 1 : numPaths
+    for i = 1:numPaths
         pathGain = pathGains(i);
-        pathDelay = pathDelays(i);     % 时延
+        pathDelay = pathDelays(i); % 时延
         pathDoppler = pathDopplers(i); % 多普勒
-        
+
         % 多普勒相位矩阵 (对角阵)
-        dopplerMatrix = diag(exp(-1j * 2 * pi * pathDoppler * (0 : totalSubcarriers - 1) / totalSubcarriers));
+        dopplerMatrix = diag(exp(-1j * 2 * pi * pathDoppler * (0:totalSubcarriers - 1) / totalSubcarriers));
 
         % H = sum( h_i * D_i * P^l_i )
-        channelMatrixPhysical = channelMatrixPhysical + pathGain * dopplerMatrix * (delayPermutationMatrix^pathDelay);
+        channelMatrixPhysical = channelMatrixPhysical + pathGain * dopplerMatrix * (delayPermutationMatrix ^ pathDelay);
     end
 
 end
