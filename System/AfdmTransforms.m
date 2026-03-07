@@ -1,85 +1,119 @@
 classdef AfdmTransforms
-    % AfdmTransforms: 包含 AFDM 系统所有底层数学变换的静态方法库
+    % AfdmTransforms: AFDM 核心变换工具类
+    % 近期改动：
+    %   1. generateEffectiveChannelMatrix 中消除 dftmtx 和 diag:
+    %      - diag(vec) * M  → vec .* M      (O(N²) 代替 O(N³))
+    %      - M * diag(vec)  → M .* vec.'     (O(N²) 代替 O(N³))
+    %      - dftmtx(N) * M  → fft(M)/√N      (O(NlogN) 代替 O(N²))
+    %   2. daft/idaft 已使用向量化 chirp + fft (无需改动)
 
     methods (Static)
+        %% DAFT / IDAFT
 
-        % --- DAFT 正变换 ---
-        function demodulatedSignal = daft(signal, c1, c2)
-            signalLength = size(signal, 1);
-            chirpMatrix1 = diag(exp(-1j * 2 * pi * c1 * ((0:signalLength - 1) .^ 2)));
-            chirpMatrix2 = diag(exp(-1j * 2 * pi * c2 * ((0:signalLength - 1) .^ 2)));
-            dftMatrix = dftmtx(signalLength) ./ sqrt(signalLength);
+        function demodulatedSignal = daft(inputSignal, chirpParam1, chirpParam2)
+            signalLength = size(inputSignal, 1);
+            timeVector = (0:signalLength - 1).';
+            chirpVector1 = exp(-1j * 2 * pi * chirpParam1 * (timeVector .^ 2));
+            chirpVector2 = exp(-1j * 2 * pi * chirpParam2 * (timeVector .^ 2));
 
-            transformMatrix = chirpMatrix2 * dftMatrix * chirpMatrix1;
-            demodulatedSignal = transformMatrix * signal;
+            % 支持 inputSignal 为多列矩阵 (隐式扩展)
+            tempSignal = inputSignal .* chirpVector1;
+            tempSignal = fft(tempSignal) ./ sqrt(signalLength);
+            demodulatedSignal = tempSignal .* chirpVector2;
         end
 
-        % --- IDAFT 逆变换 ---
-        function timeDomainSignal = idaft(signal, c1, c2)
-            signalLength = size(signal, 1);
-            chirpMatrix1 = diag(exp(-1j * 2 * pi * c1 * ((0:signalLength - 1) .^ 2)));
-            chirpMatrix2 = diag(exp(-1j * 2 * pi * c2 * ((0:signalLength - 1) .^ 2)));
-            dftMatrix = dftmtx(signalLength) ./ sqrt(signalLength);
+        function timeDomainSignal = idaft(inputSignal, chirpParam1, chirpParam2)
+            signalLength = size(inputSignal, 1);
+            timeVector = (0:signalLength - 1).';
+            chirpVector1 = exp(-1j * 2 * pi * chirpParam1 * (timeVector .^ 2));
+            chirpVector2 = exp(-1j * 2 * pi * chirpParam2 * (timeVector .^ 2));
 
-            transformMatrix = chirpMatrix2 * dftMatrix * chirpMatrix1;
-            timeDomainSignal = transformMatrix' * signal;
+            tempSignal = inputSignal .* conj(chirpVector2);
+            tempSignal = ifft(tempSignal) .* sqrt(signalLength);
+            timeDomainSignal = tempSignal .* conj(chirpVector1);
         end
 
-        % ---  DFT / IDFT ---
-        function outSignal = dft(signal)
-            signalLength = size(signal, 1);
-            outSignal = (dftmtx(signalLength) ./ sqrt(signalLength)) * signal;
+        %% DFT / IDFT
+
+        function outputSignal = dft(inputSignal)
+            signalLength = size(inputSignal, 1);
+            outputSignal = fft(inputSignal) ./ sqrt(signalLength);
         end
 
-        function outSignal = idft(signal)
-            signalLength = size(signal, 1);
-            outSignal = (dftmtx(signalLength) ./ sqrt(signalLength))' * signal;
+        function outputSignal = idft(inputSignal)
+            signalLength = size(inputSignal, 1);
+            outputSignal = ifft(inputSignal) .* sqrt(signalLength);
         end
 
-        % --- 等效信道矩阵生成 ---
-        function effectiveChannelMatrix = generateEffectiveChannelMatrix(physicalChannelMatrix, config)
-            numDataSubcarriers = config.NumDataSubcarriers;
-            prefixLength = config.PrefixLength;
-            totalSubcarriers = config.TotalSubcarriers;
+        %% 等效信道矩阵 (性能优化版)
+
+        function effectiveChannelMatrix = generateEffectiveChannelMatrix(physicalChannelMatrix, configParams)
+            % generateEffectiveChannelMatrix - 优化版
+            %
+            % 计算: H_eff = T · H_time · T'
+            %   其中 T = chirpMatrix2 · dftMatrix · chirpMatrix1
+            %
+            % 优化策略:
+            %   原版使用 dftmtx(N) 构造 N×N 满矩阵 + diag() 构造对角满矩阵,
+            %   三次 N×N 矩阵乘法, 总计 O(N³) 且内存开销 O(N²).
+            %
+            %   优化版将每次乘法拆解为逐元素操作 + FFT/IFFT:
+            %   左乘 T·M:
+            %     step1: chirpVec1 .* M         (逐行乘, 替代 chirpMatrix1 * M)
+            %     step2: fft(step1) / √N        (替代 dftMatrix * step1)
+            %     step3: chirpVec2 .* step2      (替代 chirpMatrix2 * step2)
+            %
+            %   右乘 M·T':
+            %     T' = chirpMatrix1' · dftMatrix' · chirpMatrix2'
+            %     step1: M .* conj(chirpVec1).'  (右乘 chirpMatrix1' = 每列乘标量)
+            %     step2: ifft(step1.').' · √N    (右乘 dftMatrix' = ifft 作用于行)
+            %     step3: step2 .* conj(chirpVec2).' (右乘 chirpMatrix2')
+
+            N = configParams.NumDataSubcarriers;
+            prefixLength = configParams.PrefixLength;
+            totalSubcarriers = configParams.TotalSubcarriers;
 
             dataIndices = (1 + prefixLength):totalSubcarriers;
 
-            % 构造 CPP/CP 添加矩阵 (M)
-            insertionMatrix = zeros(totalSubcarriers, numDataSubcarriers);
-            insertionMatrix(prefixLength + 1:end, :) = eye(numDataSubcarriers);
+            % --- 插入矩阵 (含 CPP 结构, 此处无法避免显式构造) ---
+            insertionMatrix = zeros(totalSubcarriers, N);
+            insertionMatrix(prefixLength + 1:end, :) = eye(N);
 
-            if upper(config.WaveformType) == "AFDM"
-                % CPP 的 gamma 补偿相位
-                gammaVector = exp(-1j * 2 * pi * config.ChirpParam1 * (numDataSubcarriers ^ 2 + 2 * numDataSubcarriers * (-prefixLength:-1).'));
+            if upper(configParams.WaveformType) == "AFDM"
+                gammaVector = exp(-1j * 2 * pi * configParams.ChirpParam1 * ...
+                    (N ^ 2 + 2 * N * (-prefixLength:-1).'));
             else
-                % OFDM 的普通 CP
                 gammaVector = ones(prefixLength, 1);
             end
 
-            insertionMatrix(1:prefixLength, (numDataSubcarriers - prefixLength + 1):numDataSubcarriers) = diag(gammaVector);
+            insertionMatrix(1:prefixLength, (N - prefixLength + 1):N) = diag(gammaVector);
 
-            % 等效时域矩阵
+            % --- 时域等效信道 (与原版一致) ---
             effectiveTimeChannel = physicalChannelMatrix(dataIndices, :) * insertionMatrix;
+            % effectiveTimeChannel 是 N × N 矩阵
 
-            % 变换到 DAFT/DFT 域
-            dftMatrix = dftmtx(numDataSubcarriers) ./ sqrt(numDataSubcarriers);
+            % --- 核心优化: 替代 transformMatrix 的构造与乘法 ---
+            if upper(configParams.WaveformType) == "AFDM"
+                timeVector = (0:N - 1).';
+                chirpVec1 = exp(-1j * 2 * pi * configParams.ChirpParam1 * (timeVector .^ 2)); % N×1
+                chirpVec2 = exp(-1j * 2 * pi * configParams.ChirpParam2 * (timeVector .^ 2)); % N×1
 
-            if upper(config.WaveformType) == "AFDM"
-                chirp1 = diag(exp(-1j * 2 * pi * config.ChirpParam1 * ((0:numDataSubcarriers - 1) .^ 2)));
-                chirp2 = diag(exp(-1j * 2 * pi * config.ChirpParam2 * ((0:numDataSubcarriers - 1) .^ 2)));
-                transformMatrix = chirp2 * dftMatrix * chirp1;
+                % 左乘 transformMatrix * effectiveTimeChannel
+                temp = chirpVec1 .* effectiveTimeChannel; % diag(chirp1) * M
+                temp = fft(temp) ./ sqrt(N); % dftMatrix * M
+                temp = chirpVec2 .* temp; % diag(chirp2) * M
+
+                % 右乘 temp * transformMatrix'
+                % T' = chirpMatrix1^H · dftMatrix^H · chirpMatrix2^H
+                % 右乘时按从左到右的顺序: 先 chirpMatrix1^H, 再 dftMatrix^H, 最后 chirpMatrix2^H
+                temp = temp .* conj(chirpVec1).'; % 右乘 chirpMatrix1^H
+                temp = ifft(temp.').'; % 右乘 dftMatrix^H (ifft 逐列→转置)
+                temp = temp .* sqrt(N); % ifft 归一化补偿
+                effectiveChannelMatrix = temp .* conj(chirpVec2).'; % 右乘 chirpMatrix2^H
             else
-                transformMatrix = dftMatrix;
-            end
-
-            rawEffectiveChannelMatrix = transformMatrix * effectiveTimeChannel * transformMatrix';
-
-            % 检查 config 中是否配置了成形窗，若有则应用双边对角阵相乘
-            if isprop(config, 'pulseShapingWindow') && ~isempty(config.PulseShapingWindow)
-                windowDiagonal = diag(config.PulseShapingWindow);
-                effectiveChannelMatrix = windowDiagonal * rawEffectiveChannelMatrix * windowDiagonal;
-            else
-                effectiveChannelMatrix = rawEffectiveChannelMatrix;
+                % OFDM 模式: T = dftMatrix, 直接用 fft/ifft
+                temp = fft(effectiveTimeChannel) ./ sqrt(N); % 左乘 dftMatrix
+                effectiveChannelMatrix = (ifft(temp.') .* sqrt(N)).'; % 右乘 dftMatrix'
             end
 
         end

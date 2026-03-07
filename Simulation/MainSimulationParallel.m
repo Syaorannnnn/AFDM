@@ -32,10 +32,10 @@ numActiveCarriersCazac = configCazacRef.NumActiveCarriers;
 bitsPerSymbol = configSingleRef.BitsPerSymbol;
 
 %% 仿真环境设置
-snrVectorDb = 0:5:20;
-targetErrors = 1e2;
-maxFrames = 1e5;
-batchSize = 100; 
+snrVectorDb = 0:5:30;
+targetErrors = 1e3;
+maxFrames = 1e6;
+batchSize = 1e2; 
 
 berSingle = zeros(length(snrVectorDb), 1);
 berCazac = zeros(length(snrVectorDb), 1);
