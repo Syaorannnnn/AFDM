@@ -4,21 +4,20 @@ function channelMatrixPhysical = LtvChannel(totalSubcarriers, pathDelays, pathDo
 
     % 构造循环移位矩阵基 (用于模拟时延)
     % 虽然叫 LTV，但这里的 Pi 构造是基于循环移位的 (Toeplitz)
-    baseVector = [zeros(1, totalSubcarriers - 1) 1];
+    baseVector             = [zeros(1, totalSubcarriers - 1) 1];
     delayPermutationMatrix = toeplitz([baseVector(1) fliplr(baseVector(2:end))], baseVector);
-
-    channelMatrixPhysical = zeros(totalSubcarriers, totalSubcarriers);
+    channelMatrixPhysical  = zeros(totalSubcarriers, totalSubcarriers);
 
     for i = 1:numPaths
-        pathGain = pathGains(i);
-        pathDelay = pathDelays(i); % 时延
-        pathDoppler = pathDopplers(i); % 多普勒
+        pathGain    = pathGains(i);
+        pathDelay   = pathDelays(i);    % 时延
+        pathDoppler = pathDopplers(i);  % 多普勒
 
         % 多普勒相位矩阵 (对角阵)
         dopplerMatrix = diag(exp(-1j * 2 * pi * pathDoppler * (0:totalSubcarriers - 1) / totalSubcarriers));
 
         % H = sum( h_i * D_i * P^l_i )
-        channelMatrixPhysical = channelMatrixPhysical + pathGain * dopplerMatrix * (delayPermutationMatrix ^ pathDelay);
+        channelMatrixPhysical = channelMatrixPhysical + pathGain * dopplerMatrix * (delayPermutationMatrix^pathDelay);
     end
 
 end
