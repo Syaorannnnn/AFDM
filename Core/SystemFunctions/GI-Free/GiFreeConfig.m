@@ -8,24 +8,24 @@ classdef GiFreeConfig < handle
     %   通过 Dependent 属性自动计算 chirp 系数、导频幅度、网格步长等派生量。
 
     properties
-        NumSubcarriers % 子载波数 N
-        ModulationOrder % QAM 调制阶数 M
-        MaxDelaySpread % 最大时延扩展 l_max
-        MaxDopplerIndex % 最大多普勒指标 k_max
-        NumPaths % 信道路径数 P
-        DopplerGuard % 多普勒保护间隔 xi_nu
-        SpreadWidth % Dirichlet 扩展半宽 k_nu
-        PilotSnrDb % 导频信噪比 (dB)
-        MaxSicIterations % 总 SIC 迭代次数 (Phase1 + Phase2 + PostDecision)
-        NumPathsUpper % OMP 搜索路径上限
-        UseFractionalDoppler % 是否启用分数多普勒
+        NumSubcarriers        % 子载波数 N
+        ModulationOrder       % QAM 调制阶数 M
+        MaxDelaySpread        % 最大时延扩展 l_max
+        MaxDopplerIndex       % 最大多普勒指标 k_max
+        NumPaths              % 信道路径数 P
+        DopplerGuard          % 多普勒保护间隔 xi_nu
+        SpreadWidth           % Dirichlet 扩展半宽 k_nu
+        PilotSnrDb            % 导频信噪比 (dB)
+        MaxSicIterations      % 总 SIC 迭代次数 (Phase1 + Phase2 + PostDecision)
+        NumPathsUpper         % OMP 搜索路径上限
+        UseFractionalDoppler  % 是否启用分数多普勒
     end
 
     properties (Dependent)
-        ChirpParam1 % DAFT 线性 chirp 参数 c1
-        ChirpParam2 % DAFT 二次 chirp 参数 c2
-        PilotAmplitude % 导频符号幅度 Ap
-        LocStep % 时延-多普勒网格步长
+        ChirpParam1     % DAFT 线性 chirp 参数 c1
+        ChirpParam2     % DAFT 二次 chirp 参数 c2
+        PilotAmplitude  % 导频符号幅度 Ap
+        LocStep         % 时延-多普勒网格步长
     end
 
     methods
