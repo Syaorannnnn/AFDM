@@ -181,7 +181,8 @@ end
 function plotDynamicPilotGain(resultStruct, figuresDir)
 % PLOTDYNAMICPILOTGAIN 绘制动态导频增益实验图。
 
-    colors = {[0.00 0.45 0.74], [0.85 0.33 0.10]};
+    ps = PlotStyle();
+    colors = {ps.Blue, ps.Red};
     lineSpecs = {'--s', '-o'};
     figureHandle = figure('Position', [80 80 980 360], 'Color', 'w');
 
