@@ -296,7 +296,7 @@ function saveResultMat(resultStruct, figuresDir)
 % SAVERESULTMAT 保存结果至 MAT，字段名为 part4Result。
 
     part4Result = resultStruct; %#ok<NASGU>
-    matPath = fullfile(figuresDir, 'Fig3_FractionalDoppler.mat');
+    matPath = fullfile(figuresDir, 'Fig4_FractionalDoppler.mat');
     save(matPath, 'part4Result');
     fprintf('  Exp4 结果已保存: %s\n', matPath);
 end
@@ -318,8 +318,8 @@ function plotFractionalBenchmark(resultStruct, figuresDir)
         'FontName', style.FontName, 'FontSize', style.TitleSize, ...
         'Interpreter', 'none');
 
-    figPath = fullfile(figuresDir, 'Fig3_FractionalDoppler.fig');
-    pngPath = fullfile(figuresDir, 'Fig3_FractionalDoppler.png');
+    figPath = fullfile(figuresDir, 'Fig4_FractionalDoppler.fig');
+    pngPath = fullfile(figuresDir, 'Fig4_FractionalDoppler.png');
     savefig(figHandle, figPath);
     try
         exportgraphics(figHandle, pngPath, 'Resolution', 300);
