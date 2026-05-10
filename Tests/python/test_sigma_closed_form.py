@@ -120,3 +120,21 @@ def test_bdlr_decompose_operator_rho_zero_gives_scalar_sigma():
     Sigma = coherent + scalar + N0_term
     expected = (np.sum(P_per) + 0.05) * np.eye(N)
     assert np.allclose(Sigma, expected, atol=1e-12)
+
+
+def test_validate_m1b_runs_small_grid(tmp_path):
+    from validate_m1b import run_sweep
+    report = run_sweep(
+        rho_values=[0.0, 0.8],
+        snr_db_values=[10.0],
+        cluster_sizes=[2, 2],
+        N=16,
+        n_trials=2000,
+        output_dir=tmp_path,
+        seed=42,
+    )
+    assert "entries" in report
+    assert len(report["entries"]) == 2
+    for entry in report["entries"]:
+        assert entry["sigma_rel_err"] < 0.15
+        assert entry["kappa_bound"] >= entry["kappa_empirical"] * (1 - 1e-6)
