@@ -9,11 +9,12 @@ AGENTS.md
 
 .vscode/
 .claude/
-.matlab_prefs/
-.matlab_prefs_tiercheckpoint/
-.matlab_prefs_codex/
+
 thesis/
-docs/
+docs/*
+!docs/superpowers/
+!docs/diagnostics/
+!docs/memory/
 Sim/Results/
 Sim/Archive/
 Sim/Tests/
