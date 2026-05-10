@@ -73,6 +73,28 @@ classdef GiFreeConfig < handle
         CfarFalseAlarmProb = 1e-3 % CFAR 目标虚警率
         EnableCfarPilotPowerNormalization = false
         CfarPilotPowerCapDb = 45   % CFAR 门限参考导频功率上限 (dB)
+        % OMP 正则化参数
+        OmpRegUpperBound = 0.15       % Phase0/1/2 OMP 正则化上限
+        Phase1OmpRegUpperBound = 0.45 % Phase1 OMP 正则化上限（渐进 CFAR 时）
+        ResidualPathThresholdScale = 0.85 % 残差路径检测门限缩放
+        UnionImproveRatio = 0.995     % 合并路径改善接受比例
+        % Phase2 迭代控制
+        Phase2AcceptTol = 0.01        % Phase2 接受容限（无支撑集变化）
+        Phase2AcceptTolWithChange = 0.02 % Phase2 接受容限（有支撑集变化）
+        Phase2ImproveTol = 0.005      % Phase2 改善判定门限
+        % 噪声估计截尾
+        TrimAlphaInit = 0.15          % 截尾 alpha 初值
+        TrimAlphaDecay = 0.02         % 截尾 alpha 每迭代衰减量
+        TrimAlphaMin = 0.05           % 截尾 alpha 下限
+        % 输出噪声与相位预算
+        OutputNoiseKeepRatio = 0.9    % 输出噪声估计保留比例
+        Phase1BudgetRatio = 0.40      % Phase1 预算比例（prioritize 模式）
+        Phase1BudgetRatioAlt = 0.30   % Phase1 预算比例（普通模式）
+        % 自适应置信度缩放
+        AdaptConfScaleDiv = 0.35      % 自适应置信度缩放除数
+        AdaptConfScaleMin = 0.75      % 自适应置信度缩放下限
+        AdaptConfScaleMax = 1.35      % 自适应置信度缩放上限
+        AdaptConfKeepCap = 0.95       % 自适应置信度保留比例上限
     end
 
     properties (Dependent)

@@ -44,7 +44,7 @@ classdef GiFreeReceiver < handle
             dataInterfPower     = (numData / numSc) * dataSnrLin;
             effectiveNoisePower = noisePowerLin + dataInterfPower;
             regParam            = effectiveNoisePower / dataSnrLin;
-            ompRegParam         = min(dataInterfPower / (pilotAmpTot^2), 0.15);
+            ompRegParam         = min(dataInterfPower / (pilotAmpTot^2), obj.Config.OmpRegUpperBound);
             baseSearchMode      = lower(obj.Config.EarlyPathSearchMode);
             rxDiag              = GiFreeReceiver.createEmptyRxDiag();
             prevOmpDiag         = [];
@@ -55,7 +55,8 @@ classdef GiFreeReceiver < handle
                 obj.Config.EnablePathStabilityGate;
             [numPhase1, numPhase2, numPostDecision] = ...
                 GiFreeReceiver.splitPhaseBudget( ...
-                    totalIter, obj.Config.EnableDfp, prioritizePhase1Budget);
+                    totalIter, obj.Config.EnableDfp, prioritizePhase1Budget, ...
+                    obj.Config.Phase1BudgetRatio, obj.Config.Phase1BudgetRatioAlt);
             rxDiag.phase1IterationBudget = numPhase1;
             rxDiag.phase2IterationBudget = numPhase2;
             rxDiag.postDecisionIterationBudget = numPostDecision;
@@ -97,7 +98,8 @@ classdef GiFreeReceiver < handle
                     rawDataEst, scaledConstellation, effectiveNoisePower, obj.Config.CleaningFeedbackMode);
                 keepRatio = GiFreeReceiver.phaseKeepRatio( ...
                     iter, numPhase1, 'phase1', obj.Config.EnableConfidenceGating, ...
-                    obj.Config.CleaningGateMode, confidence);
+                    obj.Config.CleaningGateMode, confidence, ...
+                    obj.Config.AdaptConfScaleDiv, obj.Config.AdaptConfScaleMin, obj.Config.AdaptConfScaleMax, obj.Config.AdaptConfKeepCap);
                 gatedCleaning = GiFreeReceiver.applyConfidenceGate(cleaningSymbols, confidence, keepRatio);
 
                 cleanPilotSig = rxSignal - cleaningChannel * ...
@@ -115,7 +117,7 @@ classdef GiFreeReceiver < handle
                 effectiveDetectionStrictness = GiFreeReceiver.computePhase1DetectionStrictness( ...
                     iter, numPhase1, obj.Config.EnableProgressiveCfar, ...
                     obj.Config.ProgressiveCfarInitScale, obj.Config.ProgressiveCfarFinalScale);
-                ompRegParam = min(phase1BaseOmpRegParam * effectiveDetectionStrictness, 0.45);
+                ompRegParam = min(phase1BaseOmpRegParam * effectiveDetectionStrictness, obj.Config.Phase1OmpRegUpperBound);
 
                 prevPaths = estPaths;
                 searchMode = GiFreeReceiver.selectPhase1OmpMode( ...
@@ -156,14 +158,16 @@ classdef GiFreeReceiver < handle
             for iter = 1:numPhase2
                 rawDataEst     = estFullSig(dataPos1);
                 outputNoiseVar = GiFreeReceiver.selectOutputNoiseVar( ...
-                    rawDataEst, scaledConstellation, softDecNoiseFloor, obj.Config.UseAdaptiveOutputNoise);
+                    rawDataEst, scaledConstellation, softDecNoiseFloor, obj.Config.UseAdaptiveOutputNoise, ...
+                    obj.Config.OutputNoiseKeepRatio);
                 [softSymbols, confidence] = GiFreeReceiver.computeFeedbackSymbols( ...
                     rawDataEst, scaledConstellation, outputNoiseVar, obj.Config.FeedbackMode);
                 cleaningSymbols = GiFreeReceiver.computeCleaningSymbols( ...
                     rawDataEst, scaledConstellation, outputNoiseVar, obj.Config.CleaningFeedbackMode);
                 keepRatio = GiFreeReceiver.phaseKeepRatio( ...
                     iter, numPhase2, 'phase2', obj.Config.EnableConfidenceGating, ...
-                    obj.Config.CleaningGateMode, confidence);
+                    obj.Config.CleaningGateMode, confidence, ...
+                    obj.Config.AdaptConfScaleDiv, obj.Config.AdaptConfScaleMin, obj.Config.AdaptConfScaleMax, obj.Config.AdaptConfKeepCap);
                 gatedCleaning = GiFreeReceiver.applyConfidenceGate(cleaningSymbols, confidence, keepRatio);
 
                 txFrameEst = GiFreeReceiver.buildTxFrame( ...
@@ -179,7 +183,7 @@ classdef GiFreeReceiver < handle
                 pilotResidual  = cleanPilotSig - effectiveChannel * pilotFrame;
                 residualPower  = real(pilotResidual' * pilotResidual) / numSc;
                 residualInterf = max(residualPower - noisePowerLin, 0);
-                ompRegParam    = min(max(residualInterf / (pilotAmpTot^2), 0), 0.15);
+                ompRegParam    = min(max(residualInterf / (pilotAmpTot^2), 0), obj.Config.OmpRegUpperBound);
 
                 prevPaths = estPaths;
                 searchMode = GiFreeReceiver.selectPhase2OmpMode( ...
@@ -219,7 +223,7 @@ classdef GiFreeReceiver < handle
                 localCleanPilotSig = rxSignal - bestNewHEff * ...
                     GiFreeReceiver.buildDataFrame(numSc, dataPos1, gatedCleaning);
                 [injCandidate, ~, ~] = obj.Estimator.proposeResidualPath( ...
-                    localCleanPilotSig, bestNewPaths, ompRegParam, 0.85, obsWeights);
+                    localCleanPilotSig, bestNewPaths, ompRegParam, obj.Config.ResidualPathThresholdScale, obsWeights);
                 if obj.Config.EnableResidualInjection && ~isempty(injCandidate)
                     unionPaths = GiFreeReceiver.pruneWeakPaths( ...
                         [bestNewPaths; injCandidate], obj.Config.NumPathsUpper);
@@ -231,7 +235,7 @@ classdef GiFreeReceiver < handle
                             unionPaths, rxSignal, txFrameEst, ddRegParam);
                     end
                     unionResNorm = norm(rxSignal - unionHEff * txFrameEst)^2 / numSc;
-                    if unionResNorm < bestNewResNorm * 0.995
+                    if unionResNorm < bestNewResNorm * obj.Config.UnionImproveRatio
                         bestNewPaths   = unionPaths;
                         bestNewHEff    = unionHEff;
                         bestNewResNorm = unionResNorm;
@@ -239,11 +243,11 @@ classdef GiFreeReceiver < handle
                     end
                 end
 
-                acceptTol = 0.01;
+                acceptTol = obj.Config.Phase2AcceptTol;
                 if supportChanged
-                    acceptTol = 0.02;
+                    acceptTol = obj.Config.Phase2AcceptTolWithChange;
                 end
-                improveTol = 0.005;
+                improveTol = obj.Config.Phase2ImproveTol;
                 acceptedSupportChanged = false;
 
                 if bestNewResNorm <= prevResNorm * (1 + acceptTol)
@@ -259,7 +263,7 @@ classdef GiFreeReceiver < handle
                     stagnationCount = min(stagnationCount + 1, 3);
                 end
 
-                trimAlpha         = max(0.15 - 0.02 * iter, 0.05);
+                trimAlpha         = max(obj.Config.TrimAlphaInit - obj.Config.TrimAlphaDecay * iter, obj.Config.TrimAlphaMin);
                 trimmedNoisePower = obj.Estimator.estimateNoiseTrimmed( ...
                     rxSignal, effectiveChannel, txFrameEst, trimAlpha);
                 regParam          = max(trimmedNoisePower / dataSnrLin, perfectCsiReg);
@@ -283,14 +287,16 @@ classdef GiFreeReceiver < handle
             for iter = 1:numPostDecision
                 rawDataEst = estFullSig(dataPos1);
                 outputNoiseVar = GiFreeReceiver.selectOutputNoiseVar( ...
-                    rawDataEst, scaledConstellation, noisePowerLin, obj.Config.UseAdaptiveOutputNoise);
+                    rawDataEst, scaledConstellation, noisePowerLin, obj.Config.UseAdaptiveOutputNoise, ...
+                    obj.Config.OutputNoiseKeepRatio);
                 [softSymDfp, confidenceDfp] = GiFreeReceiver.computeFeedbackSymbols( ...
                     rawDataEst, scaledConstellation, outputNoiseVar, obj.Config.FeedbackMode);
                 cleaningSymbolsDfp = GiFreeReceiver.computeCleaningSymbols( ...
                     rawDataEst, scaledConstellation, outputNoiseVar, obj.Config.CleaningFeedbackMode);
                 keepRatio = GiFreeReceiver.phaseKeepRatio( ...
                     iter, numPostDecision, 'dfp', obj.Config.EnableConfidenceGating, ...
-                    obj.Config.CleaningGateMode, confidenceDfp);
+                    obj.Config.CleaningGateMode, confidenceDfp, ...
+                    obj.Config.AdaptConfScaleDiv, obj.Config.AdaptConfScaleMin, obj.Config.AdaptConfScaleMax, obj.Config.AdaptConfKeepCap);
                 gatedCleaningDfp = GiFreeReceiver.applyConfidenceGate( ...
                     cleaningSymbolsDfp, confidenceDfp, keepRatio);
 
@@ -601,11 +607,11 @@ classdef GiFreeReceiver < handle
         end
 
         % ESTIMATEOUTPUTNOISE 基于最近星座距离估计输出噪声方差。
-        function outputNoiseVar = estimateOutputNoise(rawEst, scaledConstellation, noisePowerLin)
+        function outputNoiseVar = estimateOutputNoise(rawEst, scaledConstellation, noisePowerLin, outputNoiseKeepRatio)
             numSymbols    = length(rawEst);
             distToNearest = min(abs(rawEst - scaledConstellation.').^2, [], 2);
             sortedDist     = sort(distToNearest, 'ascend');
-            numKeep        = max(floor(numSymbols * 0.9), 1);
+            numKeep        = max(floor(numSymbols * outputNoiseKeepRatio), 1);
             outputNoiseVar = max(mean(sortedDist(1:numKeep)), noisePowerLin);
         end
 
@@ -636,7 +642,8 @@ classdef GiFreeReceiver < handle
 
         % SPLITPHASEBUDGET 按总迭代轮次分配粗锁定/迭代精炼/最终定型阶段预算。
         function [numPhase1, numPhase2, numPostDecision] = splitPhaseBudget( ...
-                totalIter, enableDfp, prioritizePhase1Budget)
+                totalIter, enableDfp, prioritizePhase1Budget, ...
+                phase1BudgetRatio, phase1BudgetRatioAlt)
             if nargin < 3
                 prioritizePhase1Budget = false;
             end
@@ -653,9 +660,9 @@ classdef GiFreeReceiver < handle
                 numPostDecision = double(enableDfp);
                 remainIter = totalIter - numPostDecision;
                 if prioritizePhase1Budget && remainIter >= 5
-                    numPhase1 = max(round(remainIter * 0.40), 4);
+                    numPhase1 = max(round(remainIter * phase1BudgetRatio), 4);
                 else
-                    numPhase1 = max(round(remainIter * 0.30), 1);
+                    numPhase1 = max(round(remainIter * phase1BudgetRatioAlt), 1);
                 end
                 numPhase1 = min(numPhase1, remainIter - 1);
                 numPhase2 = remainIter - numPhase1;
@@ -664,7 +671,8 @@ classdef GiFreeReceiver < handle
 
         % PHASEKEEPRATIO 计算当前阶段置信门控保留比例。
         function keepRatio = phaseKeepRatio( ...
-                iter, totalIter, phaseName, enableConfidenceGating, cleaningGateMode, confidence)
+                iter, totalIter, phaseName, enableConfidenceGating, cleaningGateMode, confidence, ...
+                adaptConfScaleDiv, adaptConfScaleMin, adaptConfScaleMax, adaptConfKeepCap)
             if ~enableConfidenceGating
                 keepRatio = 1.0;
                 return;
@@ -691,8 +699,8 @@ classdef GiFreeReceiver < handle
             keepRatio = ratioMin + (ratioMax - ratioMin) * progress;
             if strcmpi(cleaningGateMode, 'adaptive')
                 meanConf = mean(confidence);
-                adaptScale = min(max((1.0 - meanConf) / 0.35, 0.75), 1.35);
-                keepRatio = min(max(keepRatio * adaptScale, ratioMin), 0.95);
+                adaptScale = min(max((1.0 - meanConf) / adaptConfScaleDiv, adaptConfScaleMin), adaptConfScaleMax);
+                keepRatio = min(max(keepRatio * adaptScale, ratioMin), adaptConfKeepCap);
             end
         end
 
@@ -910,10 +918,10 @@ classdef GiFreeReceiver < handle
 
         % SELECTOUTPUTNOISEVAR 根据开关选择固定或自适应输出噪声方差。
         function outputNoiseVar = selectOutputNoiseVar( ...
-                rawEst, scaledConstellation, noisePowerLin, useAdaptiveOutputNoise)
+                rawEst, scaledConstellation, noisePowerLin, useAdaptiveOutputNoise, outputNoiseKeepRatio)
             if useAdaptiveOutputNoise
                 outputNoiseVar = GiFreeReceiver.estimateOutputNoise( ...
-                    rawEst, scaledConstellation, noisePowerLin);
+                    rawEst, scaledConstellation, noisePowerLin, outputNoiseKeepRatio);
             else
                 outputNoiseVar = noisePowerLin;
             end
