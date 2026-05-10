@@ -7,7 +7,8 @@ Usage
 Produces
 --------
     Sim/experiments/Results/m1b_validation_<timestamp>.json
-    Sim/experiments/Results/m1b_kappa_vs_rho_<timestamp>.png
+
+Plotting is deferred; downstream benchmark plans (P7) will unify the plotting layer.
 """
 
 import json

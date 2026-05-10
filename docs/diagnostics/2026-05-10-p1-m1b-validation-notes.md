@@ -33,8 +33,8 @@ is considered a PASS iff every entry satisfies:
   kappa-bound test and handled explicitly in P2.
 - Weyl kappa bound becomes loose at high rho / high SNR (ratio ~10x at rho=0.9,
   20 dB). Tighter bounds (e.g. interlacing) are an open question for the letter.
-- `validate_m1b.py` module docstring mentions a PNG output that the current
-  implementation does not produce; plotting deferred.
+- `validate_m1b.py` produces a JSON artifact only. Plotting is deferred to the
+  P7 benchmark plan per the revised module docstring.
 
 ## Downstream Consumers
 

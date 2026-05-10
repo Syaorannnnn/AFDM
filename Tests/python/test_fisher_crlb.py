@@ -96,3 +96,10 @@ def test_cluster_level_crlb_bounded_across_similarity_sweep():
     # Cluster-level CRLB should stay within one order of magnitude across the sweep.
     ratio = max(cluster_crlbs) / min(cluster_crlbs)
     assert ratio < 10.0, f"Cluster CRLB varied by {ratio:.2f}x across similarity sweep"
+
+
+def test_crlb_from_fisher_diagonal_inversion():
+    """Direct contract test: for diagonal J, CRLB is the reciprocal of diagonal entries."""
+    J = np.diag([1.0, 4.0, 16.0])
+    crlb = crlb_from_fisher(J)
+    assert np.allclose(crlb, [1.0, 0.25, 0.0625], rtol=1e-10)
