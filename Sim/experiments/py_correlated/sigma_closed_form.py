@@ -63,3 +63,38 @@ def mc_sigma(Phi_list, R, sigma_d2, N0, n_trials, rng=None):
         Sigma_accum += np.outer(y, y.conj())
     Sigma_mc = Sigma_accum / n_trials + N0 * np.eye(N)
     return Sigma_mc
+
+
+def bdlr_decompose(Phi_list, cluster_labels, P_per_cluster, rho_per_cluster,
+                   sigma_d2, N0):
+    """
+    Decompose the ensemble-expected Sigma into three additive parts.
+
+        Sigma = coherent_operator + scalar * I_N + N0 * I_N,
+        coherent_operator = sigma_d2 * sum_c P_c rho_c * G_c G_c^H,
+        G_c = sum_{i in c} Phi_i.
+
+    Shape note
+    ----------
+    Each Phi_i is a full-rank unitary (N, N) DAFT-domain operator, so
+    `G_c G_c^H` is generically rank-N. The rank-C "coherent" property
+    in spec §3.1 applies to the *conditional* kernel
+        sum_c P_c rho_c (G_c x_p) (G_c x_p)^H
+    for a given pilot vector x_p; that kernel is rank-C at rho=1. The
+    operator form returned here is the ensemble average
+    E_x [conditional kernel], which is what the Weyl bound
+    (Task 8) and the sweep runner (Task 9) consume; it has the
+    *correct* largest eigenvalue but generically full rank.
+    """
+    C = int(cluster_labels.max()) + 1
+    N = Phi_list[0].shape[0]
+    coherent = np.zeros((N, N), dtype=complex)
+    for c in range(C):
+        members = np.where(cluster_labels == c)[0]
+        Gc = sum(Phi_list[i] for i in members)
+        coherent += P_per_cluster[c] * rho_per_cluster[c] * (Gc @ Gc.conj().T)
+    coherent *= sigma_d2
+    scalar_weight = sigma_d2 * float(np.sum(P_per_cluster * (1.0 - rho_per_cluster)))
+    scalar = scalar_weight * np.eye(N, dtype=complex)
+    N0_term = N0 * np.eye(N, dtype=complex)
+    return coherent, scalar, N0_term
