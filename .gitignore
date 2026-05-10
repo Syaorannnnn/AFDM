@@ -27,7 +27,9 @@ Sim/experiments/id2p_analysis_v3.py
 Sim/experiments/id2p_correlation_probe.py
 
 thesis/
-docs/
+docs/*
+!docs/superpowers/
+!docs/diagnostics/
 Sim/Results/
 Sim/Archive/
 Sim/Tests/
