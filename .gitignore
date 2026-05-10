@@ -12,6 +12,20 @@ AGENTS.md
 .matlab_prefs/
 .matlab_prefs_tiercheckpoint/
 .matlab_prefs_codex/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Personal research materials and scratch
+.materials/
+2026-*-*.md
+
+# Generated outputs and local-only scripts
+Sim/experiments/Results/
+Sim/experiments/id2p_analysis_v3.py
+Sim/experiments/id2p_correlation_probe.py
+
 thesis/
 docs/
 Sim/Results/
