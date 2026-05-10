@@ -43,3 +43,17 @@ def crlb_from_fisher(J, eps_reg=1e-12):
     """Return diag(inv(J)) with tiny Tikhonov for near-singular J."""
     Jr = J + eps_reg * np.eye(J.shape[0])
     return np.diag(np.linalg.inv(Jr))
+
+
+def fisher_two_paths_joint(Phi_i, Phi_j, h_i, h_j, x_pilot, Sigma):
+    """
+    Joint Fisher matrix for theta = [Re(h_i), Im(h_i), Re(h_j), Im(h_j)]
+    with Phi_i, Phi_j fixed.
+    """
+    Sigma_inv = np.linalg.pinv(Sigma)
+    a = Phi_i @ x_pilot
+    b = Phi_j @ x_pilot
+    cols = [a, 1j * a, b, 1j * b]
+    G = np.stack(cols, axis=1)
+    J = 2.0 * (G.conj().T @ Sigma_inv @ G).real
+    return J

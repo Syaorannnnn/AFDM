@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Sim" / "experiments" / "py_correlated"))
 
 from fisher_crlb import fisher_single_path, crlb_from_fisher
+from fisher_crlb import fisher_two_paths_joint
 
 
 def _make_delay_operator(N, delay_frac):
@@ -32,3 +33,37 @@ def test_fisher_matrix_hermitian_and_psd():
     assert J.shape == (3, 3)  # 1 delay-like param + Re(h) + Im(h)
     assert np.allclose(J, J.conj().T, atol=1e-10)
     assert np.all(np.linalg.eigvalsh((J + J.conj().T) / 2) >= -1e-8)
+
+
+def test_two_path_crlb_diverges_as_phis_become_coherent():
+    """As Phi_j -> Phi_i, joint Fisher block near-singular -> CRLB -> inf."""
+    rng = np.random.default_rng(30)
+    N = 48
+    base = rng.standard_normal((N, N)) + 1j * rng.standard_normal((N, N))
+    U, _, _ = np.linalg.svd(base)
+    Phi_i = U                              # unitary
+    Sigma = 0.05 * np.eye(N, dtype=complex)
+    x_pilot = rng.standard_normal(N) + 1j * rng.standard_normal(N)
+    # Sweep similarity: Phi_j = cos(theta) Phi_i + sin(theta) Phi_perp
+    V, _, _ = np.linalg.svd(
+        rng.standard_normal((N, N)) + 1j * rng.standard_normal((N, N))
+    )
+    Phi_perp = V
+    crlb_gain_i = []
+    thetas = [1.0, 0.3, 0.1, 0.03, 0.01]
+    for theta in thetas:
+        Phi_j = np.cos(theta) * Phi_i + np.sin(theta) * Phi_perp
+        # Renormalise so Phi_j is still approximately unitary for the test.
+        J = fisher_two_paths_joint(
+            Phi_i=Phi_i, Phi_j=Phi_j, h_i=1.0, h_j=1.0,
+            x_pilot=x_pilot, Sigma=Sigma,
+        )
+        diag = crlb_from_fisher(J, eps_reg=1e-14)
+        crlb_gain_i.append(diag[0])  # Re(h_i) variance
+    # Expect monotone growth as theta shrinks.
+    for k in range(len(thetas) - 1):
+        assert crlb_gain_i[k + 1] > crlb_gain_i[k], (
+            f"CRLB did not grow at theta step {k}: {crlb_gain_i}"
+        )
+    # Final (near-coherent) CRLB should be at least 10x the separated case.
+    assert crlb_gain_i[-1] > 10.0 * crlb_gain_i[0]
