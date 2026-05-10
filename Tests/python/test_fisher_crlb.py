@@ -67,3 +67,32 @@ def test_two_path_crlb_diverges_as_phis_become_coherent():
         )
     # Final (near-coherent) CRLB should be at least 10x the separated case.
     assert crlb_gain_i[-1] > 10.0 * crlb_gain_i[0]
+
+
+from fisher_crlb import fisher_cluster_level
+
+
+def test_cluster_level_crlb_bounded_across_similarity_sweep():
+    rng = np.random.default_rng(31)
+    N = 48
+    U = np.linalg.svd(
+        rng.standard_normal((N, N)) + 1j * rng.standard_normal((N, N))
+    )[0]
+    V = np.linalg.svd(
+        rng.standard_normal((N, N)) + 1j * rng.standard_normal((N, N))
+    )[0]
+    Phi_i, Phi_perp = U, V
+    Sigma = 0.05 * np.eye(N, dtype=complex)
+    x_pilot = rng.standard_normal(N) + 1j * rng.standard_normal(N)
+    cluster_crlbs = []
+    for theta in [1.0, 0.3, 0.1, 0.03, 0.01]:
+        Phi_j = np.cos(theta) * Phi_i + np.sin(theta) * Phi_perp
+        Phi_cluster = Phi_i + Phi_j  # unnormalised coherent sum, matches spec §3.1
+        J_cluster = fisher_cluster_level(
+            Phi_cluster=Phi_cluster, g_cluster=1.0, x_pilot=x_pilot, Sigma=Sigma
+        )
+        diag = crlb_from_fisher(J_cluster, eps_reg=1e-14)
+        cluster_crlbs.append(diag[0])
+    # Cluster-level CRLB should stay within one order of magnitude across the sweep.
+    ratio = max(cluster_crlbs) / min(cluster_crlbs)
+    assert ratio < 10.0, f"Cluster CRLB varied by {ratio:.2f}x across similarity sweep"

@@ -57,3 +57,12 @@ def fisher_two_paths_joint(Phi_i, Phi_j, h_i, h_j, x_pilot, Sigma):
     G = np.stack(cols, axis=1)
     J = 2.0 * (G.conj().T @ Sigma_inv @ G).real
     return J
+
+
+def fisher_cluster_level(Phi_cluster, g_cluster, x_pilot, Sigma):
+    """Fisher matrix for cluster-level params [Re(g), Im(g)] with Phi_cluster fixed."""
+    Sigma_inv = np.linalg.pinv(Sigma)
+    a = Phi_cluster @ x_pilot
+    G = np.stack([a, 1j * a], axis=1)
+    J = 2.0 * (G.conj().T @ Sigma_inv @ G).real
+    return J
