@@ -44,6 +44,8 @@ is considered a PASS iff every entry satisfies:
 
 ## Regression Suite Snapshot
 
-- New P1 tests: 13 (sigma 7, p_res_eff 2, fisher 3, kappa 1).
-- Pre-existing tests in `Tests/python/`: 3 files (cfar, detection_mc, grid_stats).
-- Combined `pytest Tests/python/ -v` count: **23 passed**.
+- New P1 tests: 14 (sigma 7, p_res_eff 2, fisher 4, kappa 1). The fisher count
+  gained one `crlb_from_fisher` direct test after the post-review pass (`7b1b65b`).
+- Pre-existing tests in `Tests/python/`: 3 files (cfar, detection_mc, grid_stats),
+  10 tests combined.
+- Combined `pytest Tests/python/ -v` count: **24 passed**.
