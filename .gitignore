@@ -19,7 +19,7 @@ __pycache__/
 
 # Personal research materials and scratch
 .materials/
-2026-*-*.md
+/2026-*-*.md
 
 # Generated outputs and local-only scripts
 Sim/experiments/Results/
