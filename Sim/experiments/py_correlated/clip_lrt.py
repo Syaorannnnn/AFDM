@@ -1,8 +1,15 @@
 """End-to-end LRT-CLIP three-stage receiver.
 
-Stage 0 (Coarse-Lock): scalar Sigma = N0 * I; one MM outer pass to rough-lock support.
-Stage 1 (Iteration): full MM double loop from Stage 0 initial gains.
-Stage 2 (Polishing): hold support, rerun MoM with tightened tolerance.
+Stage 0 (Coarse-Lock diagnostic): short MM outer pass producing a diagnostic
+    snapshot of the gains and support that a full MM sweep would lock onto.
+    This stage is currently a diagnostic checkpoint only — its output is
+    recorded in `stage_results[0]` but is NOT yet wired as a warm-start into
+    Stage 1 because `mm_double_loop` re-initialises internally. True warm-
+    start seeding is deferred to the P3 integration task.
+Stage 1 (Iteration): full MM double loop, independent of Stage 0.
+Stage 2 (Polishing): hold the support learned in Stage 1, re-estimate gains
+    via MoM, and pair a freshly computed `sigma_inv` with the polished `sigma`
+    for downstream consumers.
 
 See spec §3 of 2026-05-11-p2-lrt-clip-mm-framework-design.md.
 """
@@ -12,7 +19,7 @@ from typing import List
 
 import numpy as np
 
-from mm_lrt_loop import MMConfig, mm_double_loop
+from mm_lrt_loop import MMConfig, mm_double_loop, tikhonov_inverse
 from sigma_mom import estimate_cluster_gains_mom, sigma_from_gains
 
 
@@ -68,7 +75,9 @@ def clip_lrt_receive(y, pilot_frame, config):
     )
     stage_results.append({"gains": r0.gains.copy(), "support": r0.support.copy(), "nll_final": r0.nll_trajectory[-1]})
 
-    # Stage 1: Iteration — full MM loop, initial conditions carried implicitly by starting from full support.
+    # Stage 1: Iteration — full MM loop. `mm_double_loop` currently re-initialises
+    # gains/support internally, so Stage 0's output is not a warm-start; that
+    # rewire is a P3 integration task.
     r1 = _run_mm_stage(
         y, config.Phi_per_cluster, config.N0,
         T_out=config.stage1_T_out,
@@ -82,13 +91,16 @@ def clip_lrt_receive(y, pilot_frame, config):
     support_polished = r1.support.copy()
     gains_polished = estimate_cluster_gains_mom(y, config.Phi_per_cluster, config.N0, support_polished)
     Sigma_polished = sigma_from_gains(gains_polished, config.Phi_per_cluster, config.N0)
+    # Keep sigma_inv paired with the polished Sigma so downstream consumers
+    # (e.g. P3 unrolled-EM teacher signals) see a self-consistent (Σ, Σ⁻¹) pair.
+    Sigma_inv_polished = tikhonov_inverse(Sigma_polished, config.kappa_star, config.N0)
     stage_results.append({"gains": gains_polished.copy(), "support": support_polished.copy(), "nll_final": r1.nll_trajectory[-1]})
 
     return {
         "gains": gains_polished,
         "support": support_polished,
         "sigma": Sigma_polished,
-        "sigma_inv": r1.sigma_inv,
+        "sigma_inv": Sigma_inv_polished,
         "nll_trajectory": r1.nll_trajectory,
         "n_outer": r1.n_outer,
         "stage_results": stage_results,
