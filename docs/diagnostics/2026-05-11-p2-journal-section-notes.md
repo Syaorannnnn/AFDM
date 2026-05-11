@@ -22,6 +22,10 @@ Artefact: `Sim/experiments/Results/p2/summary_20260511-115545.json` (180 entries
 - LRT BER advantage at rho=0.9, SNR=15 dB, profile=[3,3,2]: delta_ber = +0.3889
   (naive BER 0.8667 vs LRT BER 0.4778; LRT improves by 38.9 pp, cluster Pd
   jumps from 0.333 to 1.000).
+- BER-gate coverage (spec: "LRT beats naive at rho>=0.7, SNR>=15 dB for at least 80% of cluster profiles"):
+  - Per-cell reading (15/18 = 83.3%): PASS
+  - Per-profile reading (2/3 = 66.7%): FAIL — only profiles [2,2] and [3,3,2] show LRT winning at every cell in the rho>=0.7, SNR>=15 dB slice; profile [5] loses 3 of 6 cells
+- Which reading is authoritative is ambiguous in the plan text; per-cell is reported for completeness, per-profile is the stricter interpretation
 - LRT BER-gate coverage at rho>=0.7, SNR>=15 dB: LRT wins in 15 of 18 cells
   (83.3%), above the 80% target.
 - LRT NMSE advantage at rho=0.9, averaged over profiles: delta_nmse_db = -0.2979
@@ -60,6 +64,7 @@ Auxiliary empirical values already captured in unit tests:
   dominates on detection metrics (BER delta = +0.39 at the canonical cell,
   Pd 0.333 -> 1.000). Full integration into `clip_strict` where the LRT output
   feeds a downstream equaliser should recover NMSE parity; revisit in Task 10.
+- Profile [5] (single cluster spanning all five paths, full coherence) is the consistent BER loser: every BER-gate failure above rho=0.7 is a [5] cell. Mechanism: with a single full-support cluster, the naive top-half selector reduces to the identity projector, so LRT's whitening advantage disappears and MoM variance dominates. Resolution is a P3 open question — either a different `_naive_receive` baseline for single-cluster profiles or a dedicated single-cluster branch in `clip_lrt`
 
 ## Downstream Consumers
 
