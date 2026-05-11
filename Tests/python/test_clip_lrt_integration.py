@@ -51,3 +51,25 @@ def test_clip_lrt_is_seed_reproducible():
     out_b = clip_lrt_receive(y_b, pilot_frame=None, config=cfg_b)
     assert np.allclose(out_a["gains"], out_b["gains"], atol=1e-12)
     assert np.array_equal(out_a["support"], out_b["support"])
+
+
+def test_exp_p2_benchmark_runs_small_grid(tmp_path):
+    from exp_p2_benchmark import run_p2_sweep
+    report = run_p2_sweep(
+        rho_values=[0.0, 0.7],
+        snr_db_values=[15.0],
+        cluster_profiles=[[2, 2]],
+        detectors=["naive", "lrt"],
+        n_trials=3,
+        N=16,
+        output_dir=tmp_path,
+        seed=700,
+    )
+    assert "entries" in report
+    # 2 rho * 1 snr * 1 profile * 2 detectors = 4 cells
+    assert len(report["entries"]) == 4
+    for entry in report["entries"]:
+        assert "ber" in entry and entry["ber"] >= 0.0
+        assert "cluster_pd" in entry and 0.0 <= entry["cluster_pd"] <= 1.0
+        assert "nmse_db" in entry
+        assert "detector" in entry and entry["detector"] in ("naive", "lrt")
